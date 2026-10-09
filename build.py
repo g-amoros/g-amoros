@@ -11,11 +11,17 @@ ART_W = COLS * ART_FS * 0.6   # police ASCII ; interligne = 2 x largeur de carac
 RAMP = " .,:;-=+*#%@"
 
 def ascii_art(invert):
-    raw = Image.open("avatar.png").convert("RGBA")
+    cut = os.path.exists("avatar_cutout.png")
+    raw = Image.open("avatar_cutout.png" if cut else "avatar.png").convert("RGBA")
     alpha = raw.getchannel("A")
     src = raw.convert("RGB")
     w, h = src.size
-    box = (int(w*.14), int(h*.11), int(w*.88), int(h*.99))
+    opaque = not cut and alpha.getextrema()[0] == 255
+    # photo sans transparence : cadrage serré sur la tête + masque elliptique
+    box = (int(w*.20), int(h*.24), int(w*.66), int(h*.70)) if opaque else (int(w*.14), int(h*.11), int(w*.88), int(h*.99))
+    if cut:
+        l, t, r, b = alpha.point(lambda a: 255 if a > 128 else 0).getbbox()
+        box = (l, t, r, t + int((b - t) * .72))  # tête + épaules
     src = src.crop(box)
     alpha = alpha.crop(box).resize((COLS, int(COLS * src.size[1] / src.size[0] * 0.5)), Image.BOX).load()
     hsv = src.convert("HSV")
@@ -24,12 +30,15 @@ def ascii_art(invert):
     gray = gray.resize((COLS, rows), Image.LANCZOS)
     # contraste local (unsharp fort) pour faire ressortir yeux, sourcils, nez, barbe
     from PIL import ImageFilter
-    gray = gray.filter(ImageFilter.UnsharpMask(radius=2, percent=220, threshold=0))
+    gray = gray.filter(ImageFilter.UnsharpMask(radius=2, percent=160, threshold=0))
     hsv = hsv.resize((COLS, rows), Image.BOX)
     g, hp = gray.load(), hsv.load()
     def is_bg(x, y):
         hh, ss, _ = hp[x, y]
-        return alpha[x, y] < 200 or (35 < hh < 125 and ss > 55)
+        if opaque:
+            dx, dy = (x / COLS - .5) / .46, (y / rows - .5) / .5
+            return dx * dx + dy * dy > 1
+        return alpha[x, y] < 128 or (not cut and 35 < hh < 125 and ss > 55)
     vals = sorted(g[x, y] for y in range(rows) for x in range(COLS) if not is_bg(x, y))
     lo, hi = vals[int(len(vals) * .03)], vals[int(len(vals) * .97)]
     out = []
@@ -41,7 +50,7 @@ def ascii_art(invert):
                 line += " "
                 continue
             lum = min(1, max(0, (g[x, y] - lo) / (hi - lo)))
-            v = (lum if invert else 1 - lum) ** 2.0
+            v = (lum if invert else 1 - lum) ** 0.5
             line += RAMP[min(len(RAMP) - 1, int(v * len(RAMP)))]
         out.append(line.rstrip())
     return out
